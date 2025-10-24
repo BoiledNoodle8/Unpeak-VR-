@@ -1,3 +1,0 @@
-build: 2.0.8 Stable 1402
-date: 2025-10-17 10:28:20
-git: 2.0/release (4c396d6f9)
