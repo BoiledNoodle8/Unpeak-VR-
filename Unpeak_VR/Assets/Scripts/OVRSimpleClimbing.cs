@@ -3,129 +3,156 @@ using UnityEngine;
 public class OVRSimpleClimbing : MonoBehaviour
 {
     [Header("References")]
-    public OVRCameraRig cameraRig;
-    public CharacterController characterController;
+    public Transform playerRoot;          // THIS moves
+    public CharacterController controller;
     public Transform leftHand;
     public Transform rightHand;
 
-    [Header("Climbing Settings")]
+    [Header("Climb Detection")]
     public LayerMask climbableLayer;
     public float grabRadius = 0.15f;
+
+    [Header("Movement")]
     public float climbStrength = 1.0f;
+    public float smoothing = 10f;
+    public float deadzone = 0.0025f;
 
-    [Header("Momentum Jump Settings")]
+    [Header("Momentum Jump")]
     public float jumpMultiplier = 1.2f;
-    public float maxJumpVelocity = 4.0f;
     public float upwardBoost = 0.6f;
+    public float maxJumpVelocity = 4f;
 
-    private bool leftGrabbing;
-    private bool rightGrabbing;
+    private bool leftGrab;
+    private bool rightGrab;
 
     private Vector3 lastLeftPos;
     private Vector3 lastRightPos;
 
-    private Vector3 leftVelocity;
-    private Vector3 rightVelocity;
+    private Vector3 leftVel;
+    private Vector3 rightVel;
 
-    private Vector3 externalVelocity; // momentum + gravity
+    private Vector3 smoothedMove;
+    private Vector3 externalVelocity;
 
-    void Start()
+    void FixedUpdate()
     {
-        if (!cameraRig)
-            cameraRig = FindObjectOfType<OVRCameraRig>();
+        Vector3 climbMove = Vector3.zero;
 
-        if (!characterController)
-            characterController = cameraRig.GetComponent<CharacterController>();
+        if (leftGrab)
+            climbMove += -leftVel * Time.fixedDeltaTime;
+
+        if (rightGrab)
+            climbMove += -rightVel * Time.fixedDeltaTime;
+
+        if (leftGrab && rightGrab)
+            climbMove *= 0.5f;
+
+        if (climbMove.sqrMagnitude > 0f)
+        {
+            smoothedMove = Vector3.Lerp(
+                smoothedMove,
+                climbMove * climbStrength,
+                smoothing * Time.fixedDeltaTime
+            );
+
+            controller.Move(smoothedMove);
+            externalVelocity = Vector3.zero;
+        }
+        else
+        {
+            smoothedMove = Vector3.zero;
+
+            if (!controller.isGrounded)
+            {
+                externalVelocity.y += Physics.gravity.y * Time.fixedDeltaTime;
+                controller.Move(externalVelocity * Time.fixedDeltaTime);
+            }
+            else
+            {
+                externalVelocity = Vector3.zero;
+            }
+        }
     }
 
     void Update()
     {
-        HandleHand(
+        UpdateHand(
             OVRInput.Controller.LTouch,
             OVRInput.Button.PrimaryHandTrigger,
             leftHand,
-            ref leftGrabbing,
+            ref leftGrab,
             ref lastLeftPos,
-            ref leftVelocity
+            ref leftVel
         );
 
-        HandleHand(
+        UpdateHand(
             OVRInput.Controller.RTouch,
             OVRInput.Button.PrimaryHandTrigger,
             rightHand,
-            ref rightGrabbing,
+            ref rightGrab,
             ref lastRightPos,
-            ref rightVelocity
+            ref rightVel
         );
-
-        // Apply momentum & gravity
-        if (!leftGrabbing && !rightGrabbing)
-        {
-            externalVelocity.y += Physics.gravity.y * Time.deltaTime;
-            characterController.Move(externalVelocity * Time.deltaTime);
-        }
-
-        if (characterController.isGrounded)
-        {
-            externalVelocity = Vector3.zero;
-        }
     }
 
-    void HandleHand(
+    void UpdateHand(
         OVRInput.Controller controller,
         OVRInput.Button grabButton,
         Transform hand,
         ref bool grabbing,
-        ref Vector3 lastHandPos,
-        ref Vector3 handVelocity)
+        ref Vector3 lastPos,
+        ref Vector3 velocity)
     {
-        bool gripPressed = OVRInput.Get(grabButton, controller);
+        bool grip = OVRInput.Get(grabButton, controller);
 
-        if (gripPressed && IsClimbable(hand.position))
+        if (grip && IsClimbable(hand.position))
         {
             if (!grabbing)
             {
                 grabbing = true;
-                lastHandPos = hand.position;
-                handVelocity = Vector3.zero;
-                externalVelocity = Vector3.zero; // stop falling
+                lastPos = hand.position;
+                velocity = Vector3.zero;
+                externalVelocity = Vector3.zero;
             }
             else
             {
-                Vector3 delta = hand.position - lastHandPos;
-                handVelocity = delta / Mathf.Max(Time.deltaTime, 0.0001f);
+                Vector3 delta = hand.position - lastPos;
 
-                Vector3 move = -delta * climbStrength;
-                characterController.Move(move);
+                if (delta.magnitude < deadzone)
+                    velocity = Vector3.zero;
+                else
+                    velocity = Vector3.Lerp(
+                        velocity,
+                        delta / Time.deltaTime,
+                        smoothing * Time.deltaTime
+                    );
 
-                lastHandPos = hand.position;
+                lastPos = hand.position;
             }
         }
         else
         {
             if (grabbing)
-            {
-                ApplyMomentumJump(handVelocity);
-            }
+                ApplyMomentumJump(velocity);
 
             grabbing = false;
-            handVelocity = Vector3.zero;
+            velocity = Vector3.zero;
         }
     }
 
     void ApplyMomentumJump(Vector3 handVelocity)
     {
-        Vector3 jumpVelocity = -handVelocity * jumpMultiplier;
-        jumpVelocity.y += upwardBoost;
+        Vector3 jump = -handVelocity * jumpMultiplier;
+        jump.y += upwardBoost;
 
-        if (jumpVelocity.magnitude > maxJumpVelocity)
-            jumpVelocity = jumpVelocity.normalized * maxJumpVelocity;
+        if (jump.magnitude > maxJumpVelocity)
+            jump = jump.normalized * maxJumpVelocity;
 
-        externalVelocity = jumpVelocity;
+        externalVelocity = jump;
     }
 
-    bool IsClimbable(Vector3 position)
+    bool IsClimbable(Vector3 pos)
     {
-        return Physics.CheckSphere(position, grabRadius, climbableLayer);
+        return Physics.CheckSphere(pos, grabRadius, climbableLayer, QueryTriggerInteraction.Ignore);
     }
 }
