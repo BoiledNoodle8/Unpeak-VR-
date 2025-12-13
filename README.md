@@ -2,7 +2,11 @@
 VR2025
 Virtual Reality Project for Fall 2025
 
-# How to play use the side triggers on each controller to ascend the moutain. Reach the top of the mountain to win.
+## Group project
+### By Brent Peterson & Noah Grove
+
+# How to play 
+Use the side triggers on each controller to ascend the moutain. Reach the top of the mountain to win.
 
 
 # Intro
