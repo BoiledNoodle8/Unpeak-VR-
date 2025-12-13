@@ -1,109 +1,114 @@
 using UnityEngine;
 
-public class OVRSimpleClimbing : MonoBehaviour
+public class OVRClimbingController : MonoBehaviour
 {
     [Header("References")]
-    public Transform playerRoot;          // THIS moves
     public CharacterController controller;
     public Transform leftHand;
     public Transform rightHand;
 
-    [Header("Climb Detection")]
+    [Header("Climbing")]
     public LayerMask climbableLayer;
     public float grabRadius = 0.15f;
-
-    [Header("Movement")]
     public float climbStrength = 1.0f;
-    public float smoothing = 10f;
-    public float deadzone = 0.0025f;
+    public float handDeadzone = 0.003f;
+    public float smoothing = 12f;
+
+    [Header("Gravity")]
+    public float gravity = -9.81f;
+    public float groundedForce = -2f;
 
     [Header("Momentum Jump")]
     public float jumpMultiplier = 1.2f;
     public float upwardBoost = 0.6f;
     public float maxJumpVelocity = 4f;
 
-    private bool leftGrab;
-    private bool rightGrab;
+    private bool leftGrabbing;
+    private bool rightGrabbing;
 
     private Vector3 lastLeftPos;
     private Vector3 lastRightPos;
 
-    private Vector3 leftVel;
-    private Vector3 rightVel;
+    private Vector3 leftVelocity;
+    private Vector3 rightVelocity;
 
-    private Vector3 smoothedMove;
-    private Vector3 externalVelocity;
+    private Vector3 smoothClimbMove;
+    private Vector3 velocity;
+
+    void Update()
+    {
+        HandleHand(
+            OVRInput.Controller.LTouch,
+            OVRInput.Button.PrimaryHandTrigger,
+            leftHand,
+            ref leftGrabbing,
+            ref lastLeftPos,
+            ref leftVelocity
+        );
+
+        HandleHand(
+            OVRInput.Controller.RTouch,
+            OVRInput.Button.PrimaryHandTrigger,
+            rightHand,
+            ref rightGrabbing,
+            ref lastRightPos,
+            ref rightVelocity
+        );
+    }
 
     void FixedUpdate()
     {
         Vector3 climbMove = Vector3.zero;
 
-        if (leftGrab)
-            climbMove += -leftVel * Time.fixedDeltaTime;
+        if (leftGrabbing)
+            climbMove += -leftVelocity * Time.fixedDeltaTime;
 
-        if (rightGrab)
-            climbMove += -rightVel * Time.fixedDeltaTime;
+        if (rightGrabbing)
+            climbMove += -rightVelocity * Time.fixedDeltaTime;
 
-        if (leftGrab && rightGrab)
+        if (leftGrabbing && rightGrabbing)
             climbMove *= 0.5f;
 
-        if (climbMove.sqrMagnitude > 0f)
+        // Apply climbing
+        if (climbMove.sqrMagnitude > 0.0001f)
         {
-            smoothedMove = Vector3.Lerp(
-                smoothedMove,
+            smoothClimbMove = Vector3.Lerp(
+                smoothClimbMove,
                 climbMove * climbStrength,
                 smoothing * Time.fixedDeltaTime
             );
 
-            controller.Move(smoothedMove);
-            externalVelocity = Vector3.zero;
+            velocity = Vector3.zero;
+            controller.Move(smoothClimbMove);
         }
         else
         {
-            smoothedMove = Vector3.zero;
+            smoothClimbMove = Vector3.zero;
 
-            if (!controller.isGrounded)
+            // Gravity
+            if (controller.isGrounded)
             {
-                externalVelocity.y += Physics.gravity.y * Time.fixedDeltaTime;
-                controller.Move(externalVelocity * Time.fixedDeltaTime);
+                velocity.y = groundedForce;
             }
             else
             {
-                externalVelocity = Vector3.zero;
+                velocity.y += gravity * Time.fixedDeltaTime;
             }
+
+            controller.Move(velocity * Time.fixedDeltaTime);
         }
     }
 
-    void Update()
-    {
-        UpdateHand(
-            OVRInput.Controller.LTouch,
-            OVRInput.Button.PrimaryHandTrigger,
-            leftHand,
-            ref leftGrab,
-            ref lastLeftPos,
-            ref leftVel
-        );
-
-        UpdateHand(
-            OVRInput.Controller.RTouch,
-            OVRInput.Button.PrimaryHandTrigger,
-            rightHand,
-            ref rightGrab,
-            ref lastRightPos,
-            ref rightVel
-        );
-    }
-
-    void UpdateHand(
-        OVRInput.Controller controller,
+    void HandleHand(
+        OVRInput.Controller controllerInput,
         OVRInput.Button grabButton,
         Transform hand,
         ref bool grabbing,
         ref Vector3 lastPos,
-        ref Vector3 velocity)
+        ref Vector3 handVelocity
+    )
     {
-        bool grip = OVRInput.Get(grabButton, controller);
+        bool grip = OVRInput.Get(grabButton, controllerInput);
 
         if (grip && IsClimbable(hand.position))
         {
@@ -111,21 +116,25 @@ public class OVRSimpleClimbing : MonoBehaviour
             {
                 grabbing = true;
                 lastPos = hand.position;
+                handVelocity = Vector3.zero;
                 velocity = Vector3.zero;
-                externalVelocity = Vector3.zero;
             }
             else
             {
                 Vector3 delta = hand.position - lastPos;
 
-                if (delta.magnitude < deadzone)
-                    velocity = Vector3.zero;
+                if (delta.magnitude < handDeadzone)
+                {
+                    handVelocity = Vector3.zero;
+                }
                 else
-                    velocity = Vector3.Lerp(
-                        velocity,
+                {
+                    handVelocity = Vector3.Lerp(
+                        handVelocity,
                         delta / Time.deltaTime,
                         smoothing * Time.deltaTime
                     );
+                }
 
                 lastPos = hand.position;
             }
@@ -133,10 +142,10 @@ public class OVRSimpleClimbing : MonoBehaviour
         else
         {
             if (grabbing)
-                ApplyMomentumJump(velocity);
+                ApplyMomentumJump(handVelocity);
 
             grabbing = false;
-            velocity = Vector3.zero;
+            handVelocity = Vector3.zero;
         }
     }
 
@@ -148,11 +157,16 @@ public class OVRSimpleClimbing : MonoBehaviour
         if (jump.magnitude > maxJumpVelocity)
             jump = jump.normalized * maxJumpVelocity;
 
-        externalVelocity = jump;
+        velocity = jump;
     }
 
-    bool IsClimbable(Vector3 pos)
+    bool IsClimbable(Vector3 position)
     {
-        return Physics.CheckSphere(pos, grabRadius, climbableLayer, QueryTriggerInteraction.Ignore);
+        return Physics.CheckSphere(
+            position,
+            grabRadius,
+            climbableLayer,
+            QueryTriggerInteraction.Ignore
+        );
     }
 }
