@@ -4,6 +4,7 @@ public class OVRSimpleClimbing : MonoBehaviour
 {
     [Header("References")]
     public OVRCameraRig cameraRig;
+    public CharacterController characterController;
     public Transform leftHand;
     public Transform rightHand;
 
@@ -11,7 +12,11 @@ public class OVRSimpleClimbing : MonoBehaviour
     public LayerMask climbableLayer;
     public float grabRadius = 0.15f;
     public float climbStrength = 1.0f;
-    public bool allowTwoHandedClimb = true;
+
+    [Header("Momentum Jump Settings")]
+    public float jumpMultiplier = 1.2f;
+    public float maxJumpVelocity = 4.0f;
+    public float upwardBoost = 0.6f;
 
     private bool leftGrabbing;
     private bool rightGrabbing;
@@ -19,10 +24,18 @@ public class OVRSimpleClimbing : MonoBehaviour
     private Vector3 lastLeftPos;
     private Vector3 lastRightPos;
 
+    private Vector3 leftVelocity;
+    private Vector3 rightVelocity;
+
+    private Vector3 externalVelocity; // momentum + gravity
+
     void Start()
     {
         if (!cameraRig)
             cameraRig = FindObjectOfType<OVRCameraRig>();
+
+        if (!characterController)
+            characterController = cameraRig.GetComponent<CharacterController>();
     }
 
     void Update()
@@ -32,7 +45,8 @@ public class OVRSimpleClimbing : MonoBehaviour
             OVRInput.Button.PrimaryHandTrigger,
             leftHand,
             ref leftGrabbing,
-            ref lastLeftPos
+            ref lastLeftPos,
+            ref leftVelocity
         );
 
         HandleHand(
@@ -40,8 +54,21 @@ public class OVRSimpleClimbing : MonoBehaviour
             OVRInput.Button.PrimaryHandTrigger,
             rightHand,
             ref rightGrabbing,
-            ref lastRightPos
+            ref lastRightPos,
+            ref rightVelocity
         );
+
+        // Apply momentum & gravity
+        if (!leftGrabbing && !rightGrabbing)
+        {
+            externalVelocity.y += Physics.gravity.y * Time.deltaTime;
+            characterController.Move(externalVelocity * Time.deltaTime);
+        }
+
+        if (characterController.isGrounded)
+        {
+            externalVelocity = Vector3.zero;
+        }
     }
 
     void HandleHand(
@@ -49,7 +76,8 @@ public class OVRSimpleClimbing : MonoBehaviour
         OVRInput.Button grabButton,
         Transform hand,
         ref bool grabbing,
-        ref Vector3 lastHandPos)
+        ref Vector3 lastHandPos,
+        ref Vector3 handVelocity)
     {
         bool gripPressed = OVRInput.Get(grabButton, controller);
 
@@ -59,20 +87,41 @@ public class OVRSimpleClimbing : MonoBehaviour
             {
                 grabbing = true;
                 lastHandPos = hand.position;
+                handVelocity = Vector3.zero;
+                externalVelocity = Vector3.zero; // stop falling
             }
             else
             {
-                Vector3 handDelta = hand.position - lastHandPos;
-                Vector3 climbMove = -handDelta * climbStrength;
+                Vector3 delta = hand.position - lastHandPos;
+                handVelocity = delta / Mathf.Max(Time.deltaTime, 0.0001f);
 
-                cameraRig.transform.position += climbMove;
+                Vector3 move = -delta * climbStrength;
+                characterController.Move(move);
+
                 lastHandPos = hand.position;
             }
         }
         else
         {
+            if (grabbing)
+            {
+                ApplyMomentumJump(handVelocity);
+            }
+
             grabbing = false;
+            handVelocity = Vector3.zero;
         }
+    }
+
+    void ApplyMomentumJump(Vector3 handVelocity)
+    {
+        Vector3 jumpVelocity = -handVelocity * jumpMultiplier;
+        jumpVelocity.y += upwardBoost;
+
+        if (jumpVelocity.magnitude > maxJumpVelocity)
+            jumpVelocity = jumpVelocity.normalized * maxJumpVelocity;
+
+        externalVelocity = jumpVelocity;
     }
 
     bool IsClimbable(Vector3 position)
